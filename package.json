@@ -49,6 +49,7 @@
     "hapi": "15.2.0",
     "js-string-escape": "^1.0.1",
     "js-yaml": "^3.6.1",
+    "json-refs": "^2.1.5",
     "jsonpath-plus": "^0.15.0",
     "lodash": "^4.16.4",
     "velocityjs": "^0.9.0"
