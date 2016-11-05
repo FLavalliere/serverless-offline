@@ -6,22 +6,27 @@ require('coffee-script/register');
 // Node dependencies
 const fs = require('fs');
 const path = require('path');
+const YamlParser = require('./classes/YamlParser');
+
 
 // External dependencies
 const Hapi = require('hapi');
-const _ = require('lodash');
-const crypto = require('crypto');
+const isPlainObject = require('lodash').isPlainObject;
+
 // Internal lib
 require('./javaHelper');
 const debugLog = require('./debugLog');
 const jsonPath = require('./jsonPath');
 const createLambdaContext = require('./createLambdaContext');
 const createVelocityContext = require('./createVelocityContext');
-const createLambdaProxyContext = require('./createLambdaProxyContext');
 const renderVelocityTemplateObject = require('./renderVelocityTemplateObject');
 const createAuthScheme = require('./createAuthScheme');
 const functionHelper = require('./functionHelper');
 const Endpoint = require('./Endpoint');
+
+const printBlankLine = () => console.log();
+
+
 
 /*
   I'm against monolithic code like this file, but splitting it induces unneeded complexity.
@@ -34,7 +39,6 @@ class Offline {
     this.serverlessLog = serverless.cli.log.bind(serverless.cli);
     this.options = options;
     this.provider = 'aws';
-    this.start = this.start.bind(this);
 
     this.commands = {
       offline: {
@@ -45,67 +49,60 @@ class Offline {
           start: {
             usage: 'Simulates API Gateway to call your lambda functions offline using backward compatible initialization.',
             lifecycleEvents: [
-              'init',
-            ],
-          },
+              'init'
+            ]
+          }
         },
         options: {
           prefix: {
-            usage: 'Adds a prefix to every path, to send your requests to http://localhost:3000/prefix/[your_path] instead.',
-            shortcut: 'p',
+            usage: 'Adds a prefix to every path, to send your requests to http://localhost:80/prefix/[your_path] instead.',
+            shortcut: 'p'
           },
           host: {
             usage: 'The host name to listen on. Default: localhost',
-            shortcut: 'o',
+            shortcut: 'o'
           },
           port: {
-            usage: 'Port to listen on. Default: 3000',
-            shortcut: 'P',
+            usage: 'Port to listen on. Default: 80',
+            shortcut: 'P'
           },
           stage: {
             usage: 'The stage used to populate your templates.',
-            shortcut: 's',
+            shortcut: 's'
           },
           region: {
             usage: 'The region used to populate your templates.',
-            shortcut: 'r',
+            shortcut: 'r'
           },
           skipCacheInvalidation: {
             usage: 'Tells the plugin to skip require cache invalidation. A script reloading tool like Nodemon might then be needed',
-            shortcut: 'c',
+            shortcut: 'c'
           },
           httpsProtocol: {
             usage: 'To enable HTTPS, specify directory (relative to your cwd, typically your project dir) for both cert.pem and key.pem files.',
-            shortcut: 'H',
+            shortcut: 'H'
           },
           noTimeout: {
             usage: 'Disable the timeout feature.',
-            shortcut: 't',
-          },
-          dontPrintOutput: {
-            usage: 'Turns of logging of your lambda outputs in the terminal.',
+            shortcut: 't'
           },
           corsAllowOrigin: {
-            usage: 'Used to build the Access-Control-Allow-Origin header for CORS support.',
+            usage: 'Used to build the Access-Control-Allow-Origin header for CORS support.'
           },
           corsAllowHeaders: {
-            usage: 'Used to build the Access-Control-Allow-Headers header for CORS support.',
+            usage: 'Used to build the Access-Control-Allow-Headers header for CORS support.'
           },
           corsDisallowCredentials: {
-            usage: 'Used to override the Access-Control-Allow-Credentials default (which is true) to false.',
-          },
-        },
-      },
+            usage: 'Used to override the Access-Control-Allow-Credentials default (which is true) to false.'
+          }
+        }
+      }
     };
 
     this.hooks = {
-      'offline:start:init': this.start,
-      'offline:start': this.start,
+      'offline:start:init': this.start.bind(this),
+      'offline:start': this.start.bind(this)
     };
-  }
-
-  printBlankLine() {
-    console.log();
   }
 
   logPluginIssue() {
@@ -115,31 +112,49 @@ class Offline {
 
   // Entry point for the plugin (sls offline)
   start() {
+    console.error("CALLING START");
     const version = this.serverless.version;
-
     if (!version.startsWith('1.')) {
       this.serverlessLog(`Offline requires Serverless v1.x.x but found ${version}. Exiting.`);
       process.exit(0);
     }
 
-    // Some users would like to know their environment outside of the handler
-    process.env.IS_OFFLINE = true;
-
-    this._buildServer();
-    return this._listen();         // Hapijs listen
-  }
-
-  _buildServer() {
-    // Maps a request id to the request's state (done: bool, timeout: timer)
-    this.requests = {};
+    // Internals
+    process.env.IS_OFFLINE = true; // Some users would like to know their environment outside of the handler
+    this.requests = {};            // Maps a request id to the request's state (done: bool, timeout: timer)
+    this.envVars = {};             // Env vars are specific to each service
 
     // Methods
+    this._mergeEnvVars();   // Env vars are specific to each service
     this._setOptions();     // Will create meaningful options from cli options
     this._registerBabel();  // Support for ES6
     this._createServer();   // Hapijs boot
-    this._createRoutes();   // API  Gateway emulation
+    this._createRoutes("/", this.serverless);   // API  Gateway emulation
+    this._createDynamoStream(this.serverless);
     this._create404Route(); // Not found handling
-    return this.server;
+    this._listen();         // Hapijs listen
+  }
+
+  _mergeEnvVars() {
+/*
+    console.error(this.serverless);
+    this.service.environment = {}
+    console.error(this.options);
+    const env = this.service.environment;
+    console.error(env);
+    const stage = env.stages[this.options.stage];
+    const region = stage.regions[this.options.region];
+
+    Object.keys(env.vars).forEach(key => {
+      this.envVars[key] = env.vars[key];
+    });
+    Object.keys(stage.vars).forEach(key => {
+      this.envVars[key] = stage.vars[key];
+    });
+    Object.keys(region.vars).forEach(key => {
+      this.envVars[key] = region.vars[key];
+    });
+*/
   }
 
   _setOptions() {
@@ -147,15 +162,14 @@ class Offline {
     // Applies defaults
     this.options = {
       host: this.options.host || 'localhost',
-      port: this.options.port || 3000,
+      port: this.options.port || 8080,
       prefix: this.options.prefix || '/',
-      stage: this.service.provider.stage,
-      region: this.service.provider.region,
+      stage: 'dev', //this.options.stage,
+      region: 'us-east-1',
       noTimeout: this.options.noTimeout || false,
-      dontPrintOutput: this.options.dontPrintOutput || false,
       httpsProtocol: this.options.httpsProtocol || '',
       skipCacheInvalidation: this.options.skipCacheInvalidation || false,
-      corsAllowOrigin: this.options.corsAllowOrigin || '*',
+      corsAllowOrigin: "*",//this.options.corsAllowOrigin || '*',
       corsAllowHeaders: this.options.corsAllowHeaders || 'accept,content-type,x-api-key',
       corsAllowCredentials: true,
     };
@@ -167,8 +181,8 @@ class Offline {
     this.globalBabelOptions = ((this.service.custom || {})['serverless-offline'] || {}).babelOptions;
 
     this.velocityContextOptions = {
-      stageVariables: {}, // this.service.environment.stages[this.options.stage].vars,
-      stage: this.options.stage,
+      stageVariables: {},//this.service.environment.stages[this.options.stage].vars,
+      stage: 'dev',//this.options.stage,
     };
 
     // Parse CORS options
@@ -216,9 +230,9 @@ class Offline {
       },
     });
 
-    const connectionOptions = {
+    const connectionOptions = { 
       host: this.options.host,
-      port: this.options.port,
+      port: this.options.port
     };
     const httpsDir = this.options.httpsProtocol;
 
@@ -233,37 +247,95 @@ class Offline {
     // Passes the configuration object to the server
     this.server.connection(connectionOptions);
   }
-
-  _createRoutes() {
+  _createDynamoStream(serverless) {
+/*
+      var aws = require('aws-sdk')
+      var DynamoDBStream = require('dynamodb-stream')
+      var schedule = require('tempus-fugit').schedule
+      var deepDiff = require('deep-diff').diff
+      var pk = 'id'
+      var ddb = new aws.DynamoDB()
+      var ddbStream = new DynamoDBStream(new aws.DynamoDBStreams({apiVersion: '2012-08-10', endpoint: 'http://localhost:8000/', region: 'us-east-1' }), 'dev-shop-sessions')
+ 
+      var localState = {}
+	// fetch stream state initially 
+	ddbStream.fetchStreamState(function (err) {
+	    if (err) {
+	        console.error(err)
+	        return process.exit(1)
+	    }
+	    
+	    // fetch all the data 
+	})
+*/
+  }
+  _createRoutes(routePrefix, serverless) {
     const defaultContentType = 'application/json';
+
+    console.error("AAAAA? " + routePrefix);
+
+
+    console.error(serverless);
+    this.serverless = serverless;
+    this.service = serverless.service;
+    console.error("ZZZ F");
+    console.error(this.service);
+
+    try {
+        console.error("ZZZ G");
+    	require('dotenv').config({path: '/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/' + routePrefix + "/.env"});
+    } catch (ee) {
+    }
+
+    // No python or java support yet :'(
     const serviceRuntime = this.service.provider.runtime;
-    const apiKeys = this.service.provider.apiKeys;
-    const protectedRoutes = [];
     if (['nodejs', 'nodejs4.3', 'babel'].indexOf(serviceRuntime) === -1) {
-      this.printBlankLine();
+      printBlankLine();
       this.serverlessLog(`Warning: found unsupported runtime '${serviceRuntime}'`);
       return;
     }
-    // for simple API Key authentication model
-    const tokens = [];
-    if (!_.isEmpty(apiKeys)) {
-      this.serverlessLog('Generating Api Keys');
-      const parent = this;
-      _.forEach(apiKeys, (apiKey) => {
-        const generatedToken = crypto.createHash('md5').update(apiKey).digest('hex');
-        tokens.push(generatedToken);
-        parent.serverlessLog(`Key with token: ${generatedToken}`);
-        parent.serverlessLog('Remember to use x-api-key on the request headers');
-      });
-      process.env.tokens = tokens;
-    }
+
+	if (this.service.custom != undefined && this.service.custom.serverlessincludes != undefined) {
+	    var arr = this.service.custom.serverlessincludes;
+	    var s1 = this;
+	    for (var i = 0, len = arr.length; i < len; i++) {
+	          console.error("AZ GOT " + arr[i]);
+		var pref=  arr[i];
+                  var s2 = require('/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/node_modules/serverless/lib/Serverless');
+                  const serverless = new s2({ routePrefix: routePrefix, prefix: pref, sa: arr[i], servicePath: '/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/' + arr[i] + '/' });
+		  serverless.init();
+		  serverless.service.load({})
+      .then(() => {
+		console.error("AZ WTF " + serverless.config.routePrefix + serverless.config.prefix);
+		console.error(s1._createRoutes(serverless.config.routePrefix + serverless.config.prefix + "/", serverless));
+	});
+	}
+		  console.error(serverless.service);
+/*		  var yaml = new YamlParser().parse("/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/" + arr[i] + '/' + 'serverless.yml');
+		  console.error(yaml);
+    		 Object.keys(yaml.functions).forEach(key => {
+			console.error("WTF:");
+			console.error(arr[i] + "/" + key);
+			var af = require("/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/" + arr[i] + "/handler");
+			console.error(af);
+			console.error(this.service.functions);
+			this.service.functions[arr[i] + "/" + key] = { 
+						handler: 'handler.getIndex',
+						events: [ {} ],
+						name: '.-dev-list' }
+o		 });
+*/
+	    };
+
+    console.error("FUNCTION :");
+    console.error(this.service.functions);
     Object.keys(this.service.functions).forEach(key => {
 
       const fun = this.service.getFunction(key);
       const funName = key;
       const funOptions = functionHelper.getFunctionOptions(fun, key, this.serverless.config.servicePath);
 
-      this.printBlankLine();
+      printBlankLine();
       debugLog(funName, 'runtime', serviceRuntime, funOptions.babelOptions || '');
       this.serverlessLog(`Routes for ${funName}:`);
 
@@ -271,28 +343,20 @@ class Offline {
       fun.events.forEach(event => {
 
         if (!event.http) return;
-        if (_.eq(event.http.private, true)) {
-          protectedRoutes.push(`/${event.http.path}`);
-        }
-
-        // Handle Simple http setup, ex. - http: GET users/index
-        if (typeof event.http === 'string') {
-          const split = event.http.split(' ');
-          event.http = {
-            path: split[1],
-            method: split[0],
-          };
-        }
 
         // generate an enpoint via the endpoint class
         const endpoint = new Endpoint(event.http, funOptions).generate();
 
         let firstCall = true;
 
-        const integration = endpoint.integration || 'lambda-proxy';
         const epath = endpoint.path;
         const method = endpoint.method.toUpperCase();
-        const requestTemplates = endpoint.requestTemplates;
+        var requestTemplates = endpoint.requestTemplates;
+	if (endpoint.request && endpoint.request.template) {
+	    requestTemplates = endpoint.request.template;
+        }
+        console.log("ENDPOINT REQ TEMPLATE");
+        console.error(requestTemplates);
 
         // Prefix must start and end with '/' BUT path must not end with '/'
         let fullPath = this.options.prefix + (epath.startsWith('/') ? epath.slice(1) : epath);
@@ -307,9 +371,8 @@ class Offline {
           let authFunctionName = endpoint.authorizer;
           if (typeof endpoint.authorizer === 'object') {
             if (endpoint.authorizer.arn) {
-              this.serverlessLog(`WARNING: Serverless Offline does not support non local authorizers: ${endpoint.authorizer.arn}`);
-
-              return;
+              this.serverlessLog(`Serverless Offline does not support non local authorizers: ${endpoint.authorizer.arn}`);
+              this._logAndExit();
             }
             authFunctionName = endpoint.authorizer.name;
           }
@@ -318,7 +381,10 @@ class Offline {
 
           const authFunction = this.service.getFunction(authFunctionName);
 
-          if (!authFunction) return this.serverlessLog(`WARNING: Authorization function ${authFunctionName} does not exist`);
+          if (!authFunction) {
+            this.serverlessLog(`Authorization function ${authFunctionName} does not exist`);
+            this._logAndExit();
+          }
 
           let authorizerOptions = {};
           if (typeof endpoint.authorizer === 'string') {
@@ -326,7 +392,7 @@ class Offline {
             authorizerOptions.name = authFunctionName;
             authorizerOptions.type = 'TOKEN';
             authorizerOptions.resultTtlInSeconds = '300';
-            authorizerOptions.identitySource = 'method.request.header.Authorization';
+            authorizerOptions.identitySource = 'method.request.header.Auth';
           }
           else {
             authorizerOptions = endpoint.authorizer;
@@ -355,38 +421,28 @@ class Offline {
           this.server.auth.scheme(authSchemeName, scheme);
           this.server.auth.strategy(authStrategyName, authSchemeName);
         }
+
         // Route creation
+        var theRoute = fullPath;
+        console.error("BC:" + fullPath);
+        theRoute = theRoute.replaceAll("//","/").replace(/\/$/, "");
+        console.error(theRoute);
+        console.error(this.options.corsConfig);
         this.server.route({
           method,
-          path: fullPath,
+          path: theRoute,
           config: {
             cors: this.options.corsConfig,
             auth: authStrategyName,
           },
           handler: (request, reply) => { // Here we go
-
-            this.printBlankLine();
+            printBlankLine();
             this.serverlessLog(`${method} ${request.path} (λ: ${funName})`);
             if (firstCall) {
               this.serverlessLog('The first request might take a few extra seconds');
               firstCall = false;
             }
 
-            this.serverlessLog(protectedRoutes);
-            // Check for APIKey
-            if (_.includes(protectedRoutes, fullPath)) {
-              const errorResponse = response => response({ message: 'Forbidden' }).code(403).type('application/json').header('x-amzn-ErrorType', 'ForbiddenException');
-              if ('x-api-key' in request.headers) {
-                const requestToken = request.headers['x-api-key'];
-                if (!_.includes(tokens, requestToken)) {
-                  debugLog(`Method ${method} of function ${funName} token not found`);
-                  return errorResponse(reply);
-                }
-              } else {
-                debugLog(`Missing x-api-key on private function ${funName}`);
-                return errorResponse(reply);
-              }
-            }
             // Shared mutable state is the root of all evil they say
             const requestId = Math.random().toString().slice(2);
             this.requests[requestId] = { done: false };
@@ -395,9 +451,13 @@ class Offline {
             // Holds the response to do async op
             const response = reply.response().hold();
             const contentType = request.mime || defaultContentType;
-
             // default request template to '' if we don't have a definition pushed in from serverless or endpoint
-            const requestTemplate = typeof requestTemplates !== 'undefined' && integration === 'lambda' ? requestTemplates[contentType] : '';
+	    console.error("CONTENT TYPE IS:");
+	    console.error(contentType);
+            let requestTemplate = '';
+            if (typeof requestTemplates !== 'undefined') {
+              requestTemplate = requestTemplates[contentType];
+            }
 
             const contentTypesThatRequirePayloadParsing = ['application/json', 'application/vnd.api+json'];
 
@@ -405,7 +465,7 @@ class Offline {
               try {
                 request.payload = JSON.parse(request.payload);
               } catch (err) {
-                debugLog('error in converting request.payload to JSON:', err);
+                 debugLog('error in converting request.payload to JSON:', err);
               }
             }
 
@@ -419,40 +479,48 @@ class Offline {
             let handler; // The lambda function
 
             try {
+		//console.error('ET OPTION');
+               console.error(this.options);
+               console.error(funOptions);
               handler = functionHelper.createHandler(funOptions, this.options);
             } catch (err) {
+		console.error(err);
               return this._reply500(response, `Error while loading ${funName}`, err, requestId);
             }
+		//aaabb
 
             /* REQUEST TEMPLATE PROCESSING (event population) */
 
             let event = {};
 
-            if (integration === 'lambda') {
-              if (requestTemplate) {
-                try {
-                  debugLog('_____ REQUEST TEMPLATE PROCESSING _____');
-                  // Velocity templating language parsing
-                  const velocityContext = createVelocityContext(request, this.velocityContextOptions, request.payload || {});
-                  event = renderVelocityTemplateObject(requestTemplate, velocityContext);
-                } catch (err) {
-                  return this._reply500(response, `Error while parsing template "${contentType}" for ${funName}`, err, requestId);
-                }
-              } else if (typeof request.payload === 'object') {
-                event = request.payload || {};
+	    console.error("GOT REQ TMPLATE?");
+	    console.error(requestTemplate);
+            if (requestTemplate) {
+		console.error("AAAZZ");
+              try {
+                debugLog('_____ REQUEST TEMPLATE PROCESSING _____');
+                // Velocity templating language parsing
+		console.error("REQ1 TEST");
+		console.error(request.payload);
+                const velocityContext = createVelocityContext(request, this.velocityContextOptions, request.payload || {});
+                event = renderVelocityTemplateObject(requestTemplate, velocityContext);
+              } catch (err) {
+                return this._reply500(response, `Error while parsing template "${contentType}" for ${funName}`, err, requestId);
               }
-            } else if (integration === 'lambda-proxy') {
-              event = createLambdaProxyContext(request, this.options, this.velocityContextOptions.stageVariables);
+            } else if (typeof request.payload === 'object') {
+		console.error("AAABB");
+              event = request.payload || {};
             }
 
             event.isOffline = true;
-
-            if (this.serverless.service.custom && this.serverless.service.custom.stageVariables) {
-              event.stageVariables = this.serverless.service.custom.stageVariables;
-            } else if (integration !== 'lambda-proxy') {
-              event.stageVariables = {};
-            }
-
+	 console.error("AVP ATH 1");
+		console.error(event);
+	    console.error(event.path);
+            if (event.path != null) {
+    	       Object.keys(event.path).forEach(key => {
+   		event[key]=event.path[key];
+               });
+	    }
             debugLog('event:', event);
 
             // We create the context, its callback (context.done/succeed/fail) will send the HTTP response
@@ -465,33 +533,27 @@ class Offline {
 
               // User should not call context.done twice
               if (this.requests[requestId].done) {
-                this.printBlankLine();
+                printBlankLine();
                 this.serverlessLog(`Warning: context.done called twice within handler '${funName}'!`);
                 debugLog('requestId:', requestId);
                 return;
               }
 
+		console.error("RRRRR");
               this.requests[requestId].done = true;
 
               let result = data;
-              let responseName = 'default';
-              const responseContentType = endpoint.responseContentType;
+              var responseName = 'default';
+              let responseContentType = defaultContentType;
 
               /* RESPONSE SELECTION (among endpoint's possible responses) */
+	      var chosenResponse = null;
 
               // Failure handling
-              let errorStatusCode = 0;
               if (err) {
-
                 const errorMessage = (err.message || err).toString();
 
-                const re = /\[(\d{3})]/;
-                const found = errorMessage.match(re);
-                if (found && found.length > 1) {
-                  errorStatusCode = found[1];
-                } else {
-                  errorStatusCode = '500';
-                }
+		console.error("ERR MSG:" + errorMessage);
 
                 // Mocks Lambda errors
                 result = {
@@ -503,24 +565,66 @@ class Offline {
                 this.serverlessLog(`Failure: ${errorMessage}`);
                 if (result.stackTrace) console.log(result.stackTrace.join('\n  '));
 
+                console.error("RESPONSES ENDPOINT ARE");
+                console.error(endpoint.responses);
                 for (const key in endpoint.responses) {
                   if (key === 'default') continue;
 
-                  if (errorMessage.match(`^${endpoint.responses[key].selectionPattern || key}$`)) {
-                    responseName = key;
-                    break;
-                  }
+                  console.error("TTT with : " + key);
+                  console.error(endpoint.responses[key]);
+		  for (const kk in endpoint.responses[key]) {
+		    console.error("KK IS :" + kk);
+		    console.error(kk);
+		    console.error(" AND SELECTion is :" + endpoint.responses[key][kk].selectionPattern);
+		    const pattern = endpoint.responses[key][kk].pattern || endpoint.responses[key][kk].selectionPattern;
+                    if (errorMessage.match(`^${pattern}$`)) {
+		      console.error("ZZZZ");
+                      responseName = kk;
+		      chosenResponse = endpoint.responses[key][kk];
+		      if (!chosenResponse.hasOwnProperty('statusCode')) {
+			chosenResponse.statusCode = kk;
+		      }
+                      break;
+                    }
+		  }
                 }
+
               }
 
+
               debugLog(`Using response '${responseName}'`);
-              const chosenResponse = endpoint.responses[responseName];
+
+    
+              console.error("RESPONSES ENDPOINT ARE");
+              console.error(endpoint.responses);
+              console.error("RESPONSES ENDPOINT NAM IS " + responseName);
+              if (chosenResponse === null) {
+			if (endpoint.responses['statusCodes'] != null) {
+				for (var kk in endpoint.responses['statusCodes']) {
+					console.error(kk);
+					const pattern = endpoint.responses['statusCodes'][kk].pattern || endpoint.responses['statusCodes'][kk].selectionPattern;
+					console.error("patternm : " + pattern);
+					if (pattern=='' || pattern=="undefined" || pattern == null) {
+						chosenResponse = endpoint.responses[responseName];
+						chosenResponse['statusCode'] = kk;
+						break;
+					}
+					if (chosenResponse == null) {
+						chosenResponse = endpoint.responses[responseName];
+					}
+				}
+				chosenResponse = endpoint.responses[responseName];
+			} else {
+				chosenResponse = endpoint.responses[responseName];
+			}
+	      }
 
               /* RESPONSE PARAMETERS PROCCESSING */
 
+		console.error("METHOD IS" + method);
               const responseParameters = chosenResponse.responseParameters;
 
-              if (_.isPlainObject(responseParameters)) {
+              if (isPlainObject(responseParameters)) {
 
                 const responseParametersKeys = Object.keys(responseParameters);
 
@@ -550,11 +654,11 @@ class Offline {
                         headerValue = (valueArray[3] ? jsonPath(result, valueArray.slice(3).join('.')) : result).toString();
 
                       } else {
-                        this.printBlankLine();
+                        printBlankLine();
                         this.serverlessLog(`Warning: while processing responseParameter "${key}": "${value}"`);
                         this.serverlessLog(`Offline plugin only supports "integration.response.body[.JSON_path]" right-hand responseParameter. Found "${value}" instead. Skipping.`);
                         this.logPluginIssue();
-                        this.printBlankLine();
+                        printBlankLine();
                       }
                     } else {
                       headerValue = value.match(/^'.*'$/) ? value.slice(1, -1) : value; // See #34
@@ -564,68 +668,62 @@ class Offline {
                     response.header(headerName, headerValue);
 
                   } else {
-                    this.printBlankLine();
+                    printBlankLine();
                     this.serverlessLog(`Warning: while processing responseParameter "${key}": "${value}"`);
                     this.serverlessLog(`Offline plugin only supports "method.response.header.PARAM_NAME" left-hand responseParameter. Found "${key}" instead. Skipping.`);
                     this.logPluginIssue();
-                    this.printBlankLine();
+                    printBlankLine();
                   }
                 });
               }
 
-              let statusCode;
-              if (integration === 'lambda') {
-                /* RESPONSE TEMPLATE PROCCESSING */
-                // If there is a responseTemplate, we apply it to the result
-                const responseTemplates = chosenResponse.responseTemplates;
+              /* RESPONSE TEMPLATE PROCCESSING */
 
-                if (_.isPlainObject(responseTemplates)) {
+              // If there is a responseTemplate, we apply it to the result
+              const responseTemplates = chosenResponse.responseTemplates;
 
-                  const responseTemplatesKeys = Object.keys(responseTemplates);
+              if (isPlainObject(responseTemplates)) {
 
-                  if (responseTemplatesKeys.length) {
+                const responseTemplatesKeys = Object.keys(responseTemplates);
 
-                    // BAD IMPLEMENTATION: first key in responseTemplates
-                    const responseTemplate = responseTemplates[responseContentType];
+                if (responseTemplatesKeys.length) {
 
-                    if (responseTemplate) {
+                  // BAD IMPLEMENTATION: first key in responseTemplates
+                  const templateName = responseTemplatesKeys[0];
+                  const responseTemplate = responseTemplates[templateName];
 
-                      debugLog('_____ RESPONSE TEMPLATE PROCCESSING _____');
-                      debugLog(`Using responseTemplate '${responseContentType}'`);
+                  responseContentType = templateName;
 
-                      try {
-                        const reponseContext = createVelocityContext(request, this.velocityContextOptions, result);
-                        result = renderVelocityTemplateObject({ root: responseTemplate }, reponseContext).root;
-                      }
-                      catch (error) {
-                        this.serverlessLog(`Error while parsing responseTemplate '${responseContentType}' for lambda ${funName}:`);
-                        console.log(error.stack);
-                      }
+                  if (responseTemplate) {
+
+                    debugLog('_____ RESPONSE TEMPLATE PROCCESSING _____');
+                    debugLog(`Using responseTemplate '${templateName}'`);
+
+                    try {
+                      const reponseContext = createVelocityContext(request, this.velocityContextOptions, result);
+                      result = renderVelocityTemplateObject({ root: responseTemplate }, reponseContext).root;
+                    }
+                    catch (error) {
+                      this.serverlessLog(`Error while parsing responseTemplate '${templateName}' for lambda ${funName}:`);
+                      console.log(error.stack);
                     }
                   }
                 }
-
-                /* HAPIJS RESPONSE CONFIGURATION */
-                const statusCode = errorStatusCode !== 0 ? errorStatusCode : chosenResponse.statusCode || 200;
-                if (!chosenResponse.statusCode) {
-                  this.printBlankLine();
-                  this.serverlessLog(`Warning: No statusCode found for response "${responseName}".`);
-                }
-
-                response.header('Content-Type', responseContentType, {
-                  override: false, // Maybe a responseParameter set it already. See #34
-                });
-                response.statusCode = statusCode;
-                response.source = result;
               }
-              else if (integration === 'lambda-proxy') {
-                response.statusCode = statusCode = result.statusCode;
-                const defaultHeaders = { 'Content-Type': 'application/json' };
-                Object.assign(response.headers, defaultHeaders, result.headers);
-                if (!_.isUndefined(result.body)) {
-                  response.source = result.body;
-                }
+
+              /* HAPIJS RESPONSE CONFIGURATION */
+
+              const statusCode = chosenResponse.statusCode || 200;
+              if (!chosenResponse.statusCode) {
+                printBlankLine();
+                this.serverlessLog(`Warning: No statusCode found for response "${responseName}".`);
               }
+
+              response.header('Content-Type', responseContentType, {
+                override: false, // Maybe a responseParameter set it already. See #34
+              });
+              response.statusCode = statusCode;
+              response.source = result;
 
               // Log response
               let whatToLog = result;
@@ -637,10 +735,18 @@ class Offline {
                 // nothing
               }
               finally {
-                if (!this.options.dontPrintOutput) this.serverlessLog(err ? `Replying ${statusCode}` : `[${statusCode}] ${whatToLog}`);
+                this.serverlessLog(err ? `Replying ${statusCode}` : `[${statusCode}] ${whatToLog}`);
                 debugLog('requestId:', requestId);
               }
 
+	      console.error("GOT RESP");
+	      console.error(response.statusCode);
+	      console.error(response);
+	      if (response.source.url != undefined) {
+		response.statusCode= 302;
+		response.headers.location = response.source.url;
+		//response.source = response.source.url;
+	      }
               // Bon voyage!
               response.send();
             });
@@ -656,6 +762,9 @@ class Offline {
             // Finally we call the handler
             debugLog('_____ CALLING HANDLER _____');
             try {
+              event.stage = this.service.provider.stage
+              console.error("STAGE IS ");
+              console.error(event.stage);
               const x = handler(event, lambdaContext, lambdaContext.done);
 
               // Promise support
@@ -675,15 +784,10 @@ class Offline {
 
   // All done, we can listen to incomming requests
   _listen() {
-    return new Promise((resolve, reject) => {
-      this.server.start(err => {
-        if (err) return reject(err);
-
-        this.printBlankLine();
-        this.serverlessLog(`Offline listening on http${this.options.httpsProtocol ? 's' : ''}://${this.options.host}:${this.options.port}`);
-
-        resolve(this.server);
-      });
+    this.server.start(err => {
+      if (err) throw err;
+      printBlankLine();
+      this.serverlessLog(`Offline listening on http${this.options.httpsProtocol ? 's' : ''}://${this.options.host}:${this.options.port}`);
     });
   }
 

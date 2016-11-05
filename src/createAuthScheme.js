@@ -13,6 +13,8 @@ module.exports = function createAuthScheme(authFun, authorizerOptions, funName, 
     throw new Error(`Authorizer Type must be TOKEN (λ: ${authFunName})`);
   }
 
+  console.error("TES TauthorizerOption...");
+  console.error(authorizerOptions);
   const identitySourceMatch = /^method.request.header.(\w+)$/.exec(authorizerOptions.identitySource);
   if (!identitySourceMatch || identitySourceMatch.length !== 2) {
     throw new Error(`Serverless Offline only supports retrieving tokens from the headers (λ: ${authFunName})`);
@@ -30,7 +32,14 @@ module.exports = function createAuthScheme(authFun, authorizerOptions, funName, 
 
       // Get Authorization header
       const req = request.raw.req;
-      const authorization = req.headers[identityHeader];
+      console.error("GOT REQ");
+      console.error(req.headers);
+      console.error("idenityHeader");
+      console.error(identityHeader);
+      var authorization = req.headers[identityHeader];
+      if (authorization == undefined) {
+          authorization = req.headers['authorization'];
+      }
 
       debugLog(`Retrieved ${identityHeader} header ${authorization}`);
 
@@ -40,15 +49,20 @@ module.exports = function createAuthScheme(authFun, authorizerOptions, funName, 
       const event = {
         type: 'TOKEN',
         authorizationToken: authorization,
-        methodArn: `arn:aws:execute-api:${options.region}:<Account id>:<API id>/${options.stage}/${request.method.toUpperCase()}/${endpointPath}`,
+        methodArn: `arn:aws:execute-api:${options.region}:<Account id>:<API id>/${options.stage}/${funName}/${endpointPath}`,
       };
 
       // Create the Authorization function handler
       let handler;
 
       try {
+        console.error("testAce:");
+        funOptions.funName=funOptions.handlerName;
+        console.error(funOptions);
+        console.error(functionHelper);
         handler = functionHelper.createHandler(funOptions, options);
       } catch (err) {
+         console.error(err);
         return reply(Boom.badImplementation(null, `Error while loading ${authFunName}`));
       }
 
@@ -86,7 +100,7 @@ module.exports = function createAuthScheme(authFun, authorizerOptions, funName, 
           onSuccess(result);
         }
       });
-
+      
       // Execute the Authorization Function
       handler(event, lambdaContext, lambdaContext.done);
     },

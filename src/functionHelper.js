@@ -6,11 +6,15 @@ module.exports = {
   getFunctionOptions(fun, funName, servicePath) {
 
     // Split handler into method name and path i.e. handler.run
+    console.error("WWWW");
+    console.error(fun);
     const handlerPath = fun.handler.split('.')[0];
     const handlerName = fun.handler.split('/').pop().split('.')[1];
+    console.error("GE HANDLER TE");
+    console.error(fun);
     return {
-      funName,
-      handlerName, // i.e. run
+      funName: funName,
+      handlerName: handlerName, // i.e. run
       handlerPath: `${servicePath}/${handlerPath}`,
       funTimeout: (fun.timeout || 6) * 1000,
       babelOptions: ((fun.custom || {}).runtime || {}).babel,
@@ -20,6 +24,7 @@ module.exports = {
   // Create a function handler
   // The function handler is used to simulate Lambda functions
   createHandler(funOptions, options) {
+
     if (!options.skipCacheInvalidation) {
       debugLog('Invalidating cache...');
 
@@ -31,7 +36,34 @@ module.exports = {
     }
 
     debugLog(`Loading handler... (${funOptions.handlerPath})`);
-    const handler = require(funOptions.handlerPath)[funOptions.handlerName];
+    console.error("PATHT :" + funOptions.handlerPath);
+    console.error(funOptions);
+    var hand = require(funOptions.handlerPath);
+    console.error(hand);
+    var handler=hand[funOptions.funName];
+    console.error("TA");
+    console.error(handler);
+    if (typeof handler !== 'function') {
+      handler=hand['handler'];
+    }
+    console.error("TB");
+    console.error(handler);
+    if (typeof handler !== 'function') {
+      handler=hand[funOptions.handlerName];
+    }
+    console.error("TC of.. " + hand);
+    console.error(handler);
+    if (typeof handler !== 'function') {
+       hand = require(funOptions.handlerPath);
+       console.error("ZE");
+       console.error(hand);
+       console.error("Z1 : " + funOptions.handlerName);
+       handler=hand[funOptions.handlerName];
+       console.error(handler);
+       handler=handler[funOptions.funName];
+       console.error(handler);
+    }
+       
 
     if (typeof handler !== 'function') {
       throw new Error(`Serverless-offline: handler for '${funOptions.funName}' is not a function`);
