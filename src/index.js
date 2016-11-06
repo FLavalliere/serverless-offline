@@ -280,10 +280,11 @@ class Offline {
     this.service = serverless.service;
     console.error("ZZZ F");
     console.error(this.service);
+    const servicePath = serverless.config.servicePath;
 
     try {
         console.error("ZZZ G");
-    	require('dotenv').config({path: '/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/' + routePrefix + "/.env"});
+    	require('dotenv').config({path: servicePath + '/' + routePrefix + "/.env"});
     } catch (ee) {
     }
 
@@ -295,14 +296,14 @@ class Offline {
       return;
     }
 
-	if (this.service.custom != undefined && this.service.custom.serverlessincludes != undefined) {
+    if (this.service.custom != undefined && this.service.custom.serverlessincludes != undefined) {
 	    var arr = this.service.custom.serverlessincludes;
 	    var s1 = this;
 	    for (var i = 0, len = arr.length; i < len; i++) {
 	          console.error("AZ GOT " + arr[i]);
 		var pref=  arr[i];
-                  var s2 = require('/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/node_modules/serverless/lib/Serverless');
-                  const serverless = new s2({ routePrefix: routePrefix, prefix: pref, sa: arr[i], servicePath: '/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/' + arr[i] + '/' });
+                  var s2 = require(servicePath + '/node_modules/serverless/lib/Serverless');
+                  const serverless = new s2({ routePrefix: routePrefix, prefix: pref, sa: arr[i], servicePath: servicePath + '/' + arr[i] + '/' });
 		  serverless.init();
 		  serverless.service.load({})
       .then(() => {
@@ -310,22 +311,7 @@ class Offline {
 		console.error(s1._createRoutes(serverless.config.routePrefix + serverless.config.prefix + "/", serverless));
 	});
 	}
-		  console.error(serverless.service);
-/*		  var yaml = new YamlParser().parse("/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/" + arr[i] + '/' + 'serverless.yml');
-		  console.error(yaml);
-    		 Object.keys(yaml.functions).forEach(key => {
-			console.error("WTF:");
-			console.error(arr[i] + "/" + key);
-			var af = require("/Users/theace/acentera/dev/serverless/serverless-authentication-boilerplate/" + arr[i] + "/handler");
-			console.error(af);
-			console.error(this.service.functions);
-			this.service.functions[arr[i] + "/" + key] = { 
-						handler: 'handler.getIndex',
-						events: [ {} ],
-						name: '.-dev-list' }
-o		 });
-*/
-	    };
+    };
 
     console.error("FUNCTION :");
     console.error(this.service.functions);
