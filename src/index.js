@@ -112,7 +112,7 @@ class Offline {
 
   // Entry point for the plugin (sls offline)
   start() {
-    console.error("CALLING START");
+    //console.error("CALLING START");
     const version = this.serverless.version;
     if (!version.startsWith('1.')) {
       this.serverlessLog(`Offline requires Serverless v1.x.x but found ${version}. Exiting.`);
@@ -272,18 +272,18 @@ class Offline {
   _createRoutes(routePrefix, serverless) {
     const defaultContentType = 'application/json';
 
-    console.error("AAAAA? " + routePrefix);
+    //console.error("AAAAA? " + routePrefix);
 
 
-    console.error(serverless);
+    //console.error(serverless);
     this.serverless = serverless;
     this.service = serverless.service;
-    console.error("ZZZ F");
-    console.error(this.service);
+    //console.error("ZZZ F");
+    //console.error(this.service);
     const servicePath = serverless.config.servicePath;
 
     try {
-        console.error("ZZZ G");
+        //console.error("ZZZ G");
     	require('dotenv').config({path: servicePath + '/' + routePrefix + "/.env"});
     } catch (ee) {
     }
@@ -300,21 +300,20 @@ class Offline {
 	    var arr = this.service.custom.serverlessincludes;
 	    var s1 = this;
 	    for (var i = 0, len = arr.length; i < len; i++) {
-	          console.error("AZ GOT " + arr[i]);
+	          //console.error("AZ GOT " + arr[i]);
 		var pref=  arr[i];
                   var s2 = require(servicePath + '/node_modules/serverless/lib/Serverless');
                   const serverless = new s2({ routePrefix: routePrefix, prefix: pref, sa: arr[i], servicePath: servicePath + '/' + arr[i] + '/' });
 		  serverless.init();
 		  serverless.service.load({})
       .then(() => {
-		console.error("AZ WTF " + serverless.config.routePrefix + serverless.config.prefix);
-		console.error(s1._createRoutes(serverless.config.routePrefix + serverless.config.prefix + "/", serverless));
+		//console.error("AZ WTF " + serverless.config.routePrefix + serverless.config.prefix);
+		// this was inbetween console.log
+		s1._createRoutes(serverless.config.routePrefix + serverless.config.prefix + "/", serverless);
 	});
 	}
     };
 
-    console.error("FUNCTION :");
-    console.error(this.service.functions);
     Object.keys(this.service.functions).forEach(key => {
 
       const fun = this.service.getFunction(key);
@@ -341,8 +340,6 @@ class Offline {
 	if (endpoint.request && endpoint.request.template) {
 	    requestTemplates = endpoint.request.template;
         }
-        console.log("ENDPOINT REQ TEMPLATE");
-        console.error(requestTemplates);
 
         // Prefix must start and end with '/' BUT path must not end with '/'
         let fullPath = this.options.prefix + (epath.startsWith('/') ? epath.slice(1) : epath);
@@ -410,10 +407,7 @@ class Offline {
 
         // Route creation
         var theRoute = fullPath;
-        console.error("BC:" + fullPath);
         theRoute = theRoute.replaceAll("//","/").replace(/\/$/, "");
-        console.error(theRoute);
-        console.error(this.options.corsConfig);
         this.server.route({
           method,
           path: theRoute,
@@ -438,8 +432,6 @@ class Offline {
             const response = reply.response().hold();
             const contentType = request.mime || defaultContentType;
             // default request template to '' if we don't have a definition pushed in from serverless or endpoint
-	    console.error("CONTENT TYPE IS:");
-	    console.error(contentType);
             let requestTemplate = '';
             if (typeof requestTemplates !== 'undefined') {
               requestTemplate = requestTemplates[contentType];
@@ -465,9 +457,6 @@ class Offline {
             let handler; // The lambda function
 
             try {
-		//console.error('ET OPTION');
-               console.error(this.options);
-               console.error(funOptions);
               handler = functionHelper.createHandler(funOptions, this.options);
             } catch (err) {
 		console.error(err);
@@ -479,16 +468,23 @@ class Offline {
 
             let event = {};
 
-	    console.error("GOT REQ TMPLATE?");
-	    console.error(requestTemplate);
             if (requestTemplate) {
-		console.error("AAAZZ");
               try {
                 debugLog('_____ REQUEST TEMPLATE PROCESSING _____');
                 // Velocity templating language parsing
-		console.error("REQ1 TEST");
-		console.error(request.payload);
                 const velocityContext = createVelocityContext(request, this.velocityContextOptions, request.payload || {});
+                if (velocityContext.input.params().header.get == undefined) {
+            		for(var headkey in velocityContext.input.params().header) {
+				velocityContext.input.params().header[headkey.toUpperCase()]=velocityContext.input.params().header[headkey];
+		        }
+		    velocityContext.input.params().header.get = function(k) {
+			const res= this[k.toUpperCase()];
+			if ( res == null ) {
+				res = "";
+			}
+			return res;
+	  	    }
+                }
                 event = renderVelocityTemplateObject(requestTemplate, velocityContext);
               } catch (err) {
                 return this._reply500(response, `Error while parsing template "${contentType}" for ${funName}`, err, requestId);
@@ -749,8 +745,8 @@ class Offline {
             debugLog('_____ CALLING HANDLER _____');
             try {
               event.stage = this.service.provider.stage
-              console.error("STAGE IS ");
-              console.error(event.stage);
+              //console.error("STAGE IS ");
+              //console.error(event.stage);
               const x = handler(event, lambdaContext, lambdaContext.done);
 
               // Promise support

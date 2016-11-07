@@ -8,7 +8,11 @@
 
 String.prototype.contains = value => this.indexOf(value) >= 0;
 
-String.prototype.replaceAll = (oldValue, newValue) => this.replace(new RegExp(oldValue, 'gm'), newValue);
+//String.prototype.replaceAll = (oldValue, newValue) => this.replace(new RegExp(oldValue, 'gm'), newValue);
+String.prototype.replaceAll = function(search, replacement) {
+    var target = this;
+    return target.replace(new RegExp(search, 'g'), replacement);
+};
 
 String.prototype.replaceFirst = (oldValue, newValue) => this.replace(new RegExp(oldValue, 'm'), newValue);
 
